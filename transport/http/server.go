@@ -120,7 +120,6 @@ func New(service *threat.Service, key string, timeout time.Duration, ping func(c
 		ErrorHandler: func(_ echo.Context, err *echo.HTTPError) error { return echo.NewHTTPError(err.Code) },
 	}))
 	api.RegisterHandlers(e, api.NewStrictHandler(&Handler{service: service}, nil))
-	e.GET("/health/live", func(c echo.Context) error { return c.JSON(200, map[string]string{"status": "ok"}) })
 	e.GET("/health/ready", func(c echo.Context) error {
 		if err := ping(c.Request().Context()); err != nil {
 			return echo.NewHTTPError(503)

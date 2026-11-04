@@ -22,7 +22,7 @@
   Referrer-Policy no-referrer
   X-Frame-Options DENY
  }
- @api path /info /info/* /openapi.json /health/live /health/ready
+ @api path /info /info/* /openapi.json /health/ready
  route {
   rate_limit {
    zone total {
