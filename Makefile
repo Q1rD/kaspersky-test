@@ -4,7 +4,7 @@ export GOTOOLCHAIN := go1.26.10
 ANSIBLE_PLAYBOOK ?= ansible-playbook
 INVENTORY ?= inventory.yml
 VARS ?= deploy-vars.yml
-.PHONY: help images generate check-config bootstrap deploy rotate-secrets test integration check-generated vuln
+.PHONY: help images generate check-config bootstrap deploy rotate-secrets test integration check-generated vuln test-postgres-image
 
 help:
 	@echo 'Requirements: Docker + Compose v2; Go for generation; Ansible, SOPS and age for bootstrap.'
@@ -53,3 +53,6 @@ check-generated:
 vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 	go -C infra/docker/caddy run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
+test-postgres-image:
+	./scripts/test-postgres-image.sh
