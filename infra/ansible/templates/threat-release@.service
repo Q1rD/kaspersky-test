@@ -1,0 +1,25 @@
+[Unit]
+Description=Fixed-operation deployment worker
+Requires=threat-secrets.service docker.service
+After=threat-secrets.service docker.service
+[Service]
+ExecStart=/usr/local/libexec/threat/release-broker.py
+StandardInput=socket
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=600
+RuntimeMaxSec=600
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/threat-service/releases /run/lock
+InaccessiblePaths=/etc/threat-service/age.key /etc/threat-service/secrets.enc.json /run/threat-service

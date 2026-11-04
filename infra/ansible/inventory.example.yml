@@ -1,0 +1,11 @@
+# Replace documentation addresses and select an existing sudo-capable administrator.
+all:
+  children:
+    threat:
+      hosts:
+        threat-host:
+          ansible_host: 203.0.113.10
+          ansible_user: deployadmin
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+          ansible_ssh_common_args: -o StrictHostKeyChecking=yes
+          ansible_python_interpreter: /usr/bin/python3

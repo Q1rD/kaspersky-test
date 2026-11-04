@@ -1,0 +1,11 @@
+[Unit]
+Description=Check service, storage capacity and backup freshness
+After=threat-stack.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/threat/health-check.py
+TimeoutStartSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes

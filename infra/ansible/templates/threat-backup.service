@@ -1,0 +1,11 @@
+[Unit]
+Description=Encrypted off-host PostgreSQL backup
+Requires=threat-stack.service
+After=threat-stack.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/threat/stack.py backup
+TimeoutStartSec=1800
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

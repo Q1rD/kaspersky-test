@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+if [ -f /run/threat-firewall.previous ]; then
+ /usr/sbin/nft delete table inet threat || true
+ /usr/sbin/nft -f /run/threat-firewall.previous
+ cp /run/threat-firewall.previous /etc/threat-service/firewall.nft
+fi
+if [ -f /run/threat-sshd.previous ]; then
+ cp /run/threat-sshd.previous /etc/ssh/sshd_config.d/00-threat-service.conf
+ /usr/sbin/sshd -t && systemctl reload ssh
+fi

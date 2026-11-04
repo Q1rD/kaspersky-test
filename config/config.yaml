@@ -1,0 +1,12 @@
+http:
+  address: ":8080"
+  request_timeout: 5s
+postgres:
+  host: postgres
+  port: 5432
+  database: threats
+  user: threat_app
+  password_file: /run/secrets/db_app_password
+  max_conns: 10
+  sslmode: disable
+api_key_file: /run/secrets/api_key

@@ -1,0 +1,7 @@
+[Unit]
+Description=Periodic local health evidence
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=5m
+[Install]
+WantedBy=timers.target

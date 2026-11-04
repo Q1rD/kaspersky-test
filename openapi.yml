@@ -1,0 +1,430 @@
+openapi: 3.0.3
+info:
+  title: Threat Information Exchange
+  version: 1.0.0
+  description: Обмен сведениями об угрозах. Максимум тела 64 KiB. Секреты и внутренние
+    ошибки не возвращаются клиенту.
+paths:
+  /info:
+    get:
+      operationId: listThreats
+      summary: Список угроз
+      description: Фильтр платформ — хотя бы одна (OR); предки в фильтр не добавляются.
+        Порядок created_at DESC, md5 ASC. Offset-пагинация может сдвигаться при конкурентных
+        вставках.
+      parameters:
+      - name: platforms
+        in: query
+        style: form
+        explode: true
+        schema:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/Platform'
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          default: 0
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThreatList'
+        '400':
+          description: Некорректный запрос
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Превышен лимит запросов Caddy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Сервис временно недоступен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      operationId: createThreat
+      summary: Создать угрозу
+      security:
+      - ApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ThreatCreateRequest'
+      responses:
+        '201':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThreatResponse'
+        '400':
+          description: Некорректный запрос
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Отсутствует или неверен API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: MD5 уже существует
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Превышен размер тела запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '415':
+          description: Требуется application/json
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Превышен лимит запросов Caddy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Сервис временно недоступен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /info/{md5}:
+    parameters:
+    - name: md5
+      in: path
+      required: true
+      schema: &id001
+        type: string
+        pattern: ^[a-fA-F0-9]{32}$
+        description: MD5 файла, при сохранении приводится к нижнему регистру
+    get:
+      operationId: getInfoByMd5
+      summary: Получить угрозу
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThreatResponse'
+        '400':
+          description: Некорректный запрос
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Угроза не найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Превышен лимит запросов Caddy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Сервис временно недоступен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: updateThreat
+      summary: Полностью заменить существующую угрозу
+      description: Пропущенные optional-поля очищаются, type/severity получают unknown,
+        platforms — []. MD5 и created_at неизменны. Идентичная нормализованная запись
+        сохраняет updated_at.
+      security:
+      - ApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ThreatUpdateRequest'
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThreatResponse'
+        '400':
+          description: Некорректный запрос
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Отсутствует или неверен API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Угроза не найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Превышен размер тела запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '415':
+          description: Требуется application/json
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Превышен лимит запросов Caddy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Сервис временно недоступен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  schemas:
+    Platform:
+      type: string
+      enum:
+      - windows
+      - linux
+      - arch
+      - ubuntu
+      - debian
+      - fedora
+      - macos
+      - android
+      - ios
+    ThreatType:
+      type: string
+      enum:
+      - trojan
+      - worm
+      - ransomware
+      - spyware
+      - adware
+      - other
+      - unknown
+      default: unknown
+    Severity:
+      type: string
+      enum:
+      - low
+      - medium
+      - high
+      - critical
+      - unknown
+      default: unknown
+    ThreatCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - md5
+      - name
+      properties:
+        md5: *id001
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Название после удаления пробелов по краям не может быть пустым
+        description:
+          type: string
+          maxLength: 4096
+        type:
+          $ref: '#/components/schemas/ThreatType'
+        severity:
+          $ref: '#/components/schemas/Severity'
+        platforms:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/Platform'
+          description: Сервис добавляет родительские платформы, удаляет повторы и
+            сортирует. Пустой массив означает отсутствие сведений.
+        first_seen_at:
+          type: string
+          format: date-time
+          description: Первое обнаружение; не в будущем. UTC, точность микросекунд.
+    ThreatUpdateRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Название после удаления пробелов по краям не может быть пустым
+        description:
+          type: string
+          maxLength: 4096
+        type:
+          $ref: '#/components/schemas/ThreatType'
+        severity:
+          $ref: '#/components/schemas/Severity'
+        platforms:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/Platform'
+          description: Сервис добавляет родительские платформы, удаляет повторы и
+            сортирует. Пустой массив означает отсутствие сведений.
+        first_seen_at:
+          type: string
+          format: date-time
+          description: Первое обнаружение; не в будущем. UTC, точность микросекунд.
+    ThreatResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - md5
+      - name
+      - type
+      - severity
+      - platforms
+      - created_at
+      - updated_at
+      properties:
+        md5:
+          type: string
+          pattern: ^[a-fA-F0-9]{32}$
+          description: MD5 файла, при сохранении приводится к нижнему регистру
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Название после удаления пробелов по краям не может быть пустым
+        description:
+          type: string
+          maxLength: 4096
+        type:
+          $ref: '#/components/schemas/ThreatType'
+        severity:
+          $ref: '#/components/schemas/Severity'
+        platforms:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/Platform'
+          description: Сервис добавляет родительские платформы, удаляет повторы и
+            сортирует. Пустой массив означает отсутствие сведений.
+          uniqueItems: true
+        first_seen_at:
+          type: string
+          format: date-time
+          description: Первое обнаружение; не в будущем. UTC, точность микросекунд.
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - message
+      properties:
+        message:
+          type: string
+        details:
+          type: string
+    ThreatList:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - limit
+      - offset
+      - has_more
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ThreatResponse'
+        limit:
+          type: integer
+        offset:
+          type: integer
+        has_more:
+          type: boolean

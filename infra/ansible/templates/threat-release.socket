@@ -1,0 +1,11 @@
+[Unit]
+Description=Unprivileged deployment requests
+[Socket]
+ListenStream=/run/threat-release.sock
+SocketUser=root
+SocketGroup=threat-deploy
+SocketMode=0660
+Accept=yes
+MaxConnections=4
+[Install]
+WantedBy=sockets.target

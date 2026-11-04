@@ -1,0 +1,14 @@
+[Unit]
+Description=Threat service stack
+Requires=docker.service threat-secrets.service threat-firewall.service
+After=docker.service threat-secrets.service threat-firewall.service network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/threat/stack.py start
+ExecStop=/usr/local/libexec/threat/stack.py stop
+TimeoutStartSec=180
+TimeoutStopSec=120
+[Install]
+WantedBy=multi-user.target

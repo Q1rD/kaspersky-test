@@ -1,0 +1,27 @@
+---
+- name: Deploy a signed release without privilege escalation
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: true
+  tasks:
+    - name: Require the dedicated unprivileged deploy account
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.user_id == 'threat-deploy'
+          - release_manifest is defined
+          - release_signature is defined
+    - name: Install signed manifest through the root worker
+      ansible.builtin.command:
+        argv: [/usr/local/libexec/threat/release-client.py, install, '{{ release_manifest }}', --signature, '{{ release_signature }}']
+      register: installed
+      changed_when: true
+    - name: Show the validated plan
+      ansible.builtin.command:
+        argv: [/usr/local/libexec/threat/release-client.py, plan, '{{ (installed.stdout | from_json).result.id }}']
+      changed_when: false
+    - name: Apply the validated release
+      ansible.builtin.command:
+        argv: [/usr/local/libexec/threat/release-client.py, deploy, '{{ (installed.stdout | from_json).result.id }}']
+      register: deployed
+      changed_when: true

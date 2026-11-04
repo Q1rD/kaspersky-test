@@ -1,0 +1,31 @@
+# Copy to deploy-vars.yml and replace ALL example values before bootstrap.
+# Dedicated Ubuntu 24.04 host; admin_user must already exist with sudo access.
+admin_user: deployadmin
+admin_cidr: 203.0.113.20/32
+admin_cidr_v6: ''
+admin_public_key: 'ssh-ed25519 REPLACE_WITH_ADMIN_PUBLIC_KEY'
+deploy_public_key: 'ssh-ed25519 REPLACE_WITH_DEPLOY_PUBLIC_KEY'
+site_address: threats.example.invalid
+local_tls: false
+apply_updates: true
+
+# Absolute paths on the Ansible controller. Never give the signing private key to the server.
+secrets_file: /absolute/path/secrets.enc.json
+age_key_file: /absolute/path/host-age.key
+signing_public_key: /absolute/path/release-signing.pub
+sops_binary: /absolute/path/sops
+backup_ca: /absolute/path/backup-ca.crt
+
+# Existing TLS S3-compatible storage; its credentials belong in the SOPS document.
+backup_endpoint: backup.example.invalid
+backup_ip: 203.0.113.30
+backup_port: 443
+backup_bucket: threat-backup
+archive_enabled: true
+
+# Signed releases must reference these repositories by immutable @sha256 digest.
+allow_local_image_ids: false
+image_repositories:
+  api: ghcr.io/REPLACE_OWNER/threat-api
+  caddy: ghcr.io/REPLACE_OWNER/threat-caddy
+  postgres: ghcr.io/REPLACE_OWNER/threat-postgres

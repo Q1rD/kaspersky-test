@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+# Replace just our table in one nftables transaction; retain Docker's tables.
+if /usr/sbin/nft list table inet threat >/dev/null 2>&1; then
+ { echo 'delete table inet threat'; cat /etc/threat-service/firewall.nft; } | /usr/sbin/nft -f -
+else
+ /usr/sbin/nft -f /etc/threat-service/firewall.nft
+fi

@@ -1,0 +1,5 @@
+# Replace with public age recipients of the host and recovery operators.
+# Never put an AGE-SECRET-KEY or release signing private key in this repository.
+creation_rules:
+  - path_regex: secrets/.*\.enc\.json$
+    age: age1REPLACE_WITH_PUBLIC_RECIPIENT

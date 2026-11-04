@@ -1,0 +1,132 @@
+name: threat
+x-common: &common
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true, apparmor:docker-default]
+  pids_limit: 128
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: '3'}
+services:
+  postgres:
+    <<: *common
+    image: ${POSTGRES_IMAGE:?required}
+    user: '999:999'
+    mem_limit: 768m
+    cpus: 1.0
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_admin_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=peer
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command: [postgres, -c, hba_file=/etc/postgresql/pg_hba.conf, -c, password_encryption=scram-sha-256, -c, shared_buffers=128MB, -c, max_connections=40, -c, wal_level=replica, -c, 'archive_mode=${ARCHIVE_MODE:-on}', -c, 'archive_command=pgbackrest --stanza=main archive-push %p', -c, archive_timeout=60, -c, log_statement=none, -c, log_min_error_statement=panic]
+    volumes:
+      - /var/lib/threat-service/postgres:/var/lib/postgresql/data
+      - /run/threat-service/pgsocket:/var/run/postgresql
+      - /run/threat-service/db_admin_password:/run/secrets/db_admin_password:ro
+      - /run/threat-service/pginit_app_password:/run/secrets/pginit_app_password:ro
+      - /run/threat-service/pginit_migrate_password:/run/secrets/pginit_migrate_password:ro
+      - /run/threat-service/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - /etc/threat-service/backup-ca.crt:/etc/ssl/backup-ca.crt:ro
+      - /etc/threat-service/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    tmpfs: ['/tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777']
+    networks:
+      database: {ipv4_address: 172.30.42.2}
+      egress: {ipv4_address: 172.30.40.4}
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U postgres -d postgres && test "$$(psql -U postgres -d postgres -Atqc "SELECT NOT pg_is_in_recovery()")" = t']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    stop_grace_period: 60s
+  migrate:
+    <<: *common
+    restart: 'no'
+    profiles: [tools]
+    image: ${API_IMAGE:?required}
+    entrypoint: [/migrate]
+    user: '10002:10002'
+    mem_limit: 128m
+    cpus: 0.5
+    environment:
+      DB_USER: threat_migrator
+      DB_PASSWORD_FILE: /run/secrets/db_migrate_password
+    volumes:
+      - /run/threat-service/db_migrate_password:/run/secrets/db_migrate_password:ro
+    networks:
+      database: {ipv4_address: 172.30.42.4}
+  api:
+    <<: *common
+    image: ${API_IMAGE:?required}
+    user: '10001:10001'
+    mem_limit: 256m
+    cpus: 1.0
+    environment: {GOMEMLIMIT: 200MiB}
+    volumes:
+      - /run/threat-service/db_app_password:/run/secrets/db_app_password:ro
+      - /run/threat-service/api_key:/run/secrets/api_key:ro
+    networks:
+      proxy: {ipv4_address: 172.30.41.3}
+      database: {ipv4_address: 172.30.42.3}
+    healthcheck:
+      test: [CMD, /probe, 'http://127.0.0.1:8080/health/ready']
+      interval: 5s
+      timeout: 4s
+      retries: 6
+    depends_on:
+      postgres: {condition: service_healthy}
+  caddy:
+    <<: *common
+    image: ${CADDY_IMAGE:?required}
+    user: '10003:10003'
+    mem_limit: 256m
+    cpus: 1.0
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?required}
+      TLS_DIRECTIVE: ${TLS_DIRECTIVE:-}
+    ports: ['80:8080', '443:8443']
+    volumes:
+      - /etc/threat-service/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /var/lib/threat-service/caddy:/data
+    tmpfs: ['/config:rw,noexec,nosuid,nodev,size=8m,uid=10003,gid=10003,mode=0700', '/tmp:rw,noexec,nosuid,nodev,size=8m,uid=10003,gid=10003,mode=0700']
+    networks:
+      egress: {ipv4_address: 172.30.40.2}
+      proxy: {ipv4_address: 172.30.41.2}
+    healthcheck:
+      test: [CMD, /probe, 'http://127.0.0.1:8090/health/live']
+      interval: 5s
+      timeout: 3s
+      retries: 6
+    depends_on:
+      api: {condition: service_healthy}
+  backup:
+    <<: *common
+    profiles: [tools]
+    restart: 'no'
+    image: ${POSTGRES_IMAGE:?required}
+    user: '999:999'
+    mem_limit: 256m
+    cpus: 0.5
+    entrypoint: [pgbackrest]
+    command: [--stanza=main, --type=full, backup]
+    volumes:
+      - /var/lib/threat-service/postgres:/var/lib/postgresql/data:ro
+      - /run/threat-service/pgsocket:/var/run/postgresql:ro
+      - /run/threat-service/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - /etc/threat-service/backup-ca.crt:/etc/ssl/backup-ca.crt:ro
+    tmpfs: ['/tmp:rw,noexec,nosuid,nodev,size=64m,uid=999,gid=999,mode=0700']
+    networks:
+      egress: {ipv4_address: 172.30.40.3}
+      database: {ipv4_address: 172.30.42.5}
+networks:
+  egress:
+    driver_opts: {com.docker.network.bridge.name: br-th-egress}
+    ipam: {config: [{subnet: 172.30.40.0/24}]}
+  proxy:
+    internal: true
+    driver_opts: {com.docker.network.bridge.name: br-th-proxy}
+    ipam: {config: [{subnet: 172.30.41.0/24}]}
+  database:
+    internal: true
+    driver_opts: {com.docker.network.bridge.name: br-th-db}
+    ipam: {config: [{subnet: 172.30.42.0/24}]}

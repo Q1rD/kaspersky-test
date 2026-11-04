@@ -1,0 +1,14 @@
+.local/
+.env
+coverage.out
+bin/
+*.qcow2
+*.img
+__pycache__/
+.venv/
+*.key
+*.pem
+*.enc.json
+.env.*
+/inventory.yml
+/deploy-vars.yml

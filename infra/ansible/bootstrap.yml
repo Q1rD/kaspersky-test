@@ -1,0 +1,325 @@
+---
+- name: Converge a dedicated Ubuntu 24.04 host
+  hosts: threat
+  become: true
+  gather_facts: true
+  vars:
+    repo_root: '{{ playbook_dir }}/../..'
+    admin_cidr_v6: ''
+  tasks:
+    - name: Validate platform and explicit administrative inputs
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == 'Ubuntu'
+          - ansible_facts.distribution_version == '24.04'
+          - admin_user is defined
+          - admin_cidr is defined
+          - admin_public_key is defined
+          - deploy_public_key is defined
+          - admin_public_key is match('^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+) [A-Za-z0-9+/]+={0,3}( .*)?$')
+          - deploy_public_key is match('^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+) [A-Za-z0-9+/]+={0,3}( .*)?$')
+          - secrets_file is defined
+          - age_key_file is defined
+          - signing_public_key is defined
+          - backup_ca is defined
+          - site_address is defined
+    - name: Inspect deployed secret revision before changing host configuration
+      ansible.builtin.stat:
+        path: /etc/threat-service/secrets.enc.json
+        checksum_algorithm: sha256
+      register: existing_cipher
+      no_log: true
+    - name: Inspect whether an application release is installed
+      ansible.builtin.stat:
+        path: /var/lib/threat-service/releases/current.json
+      register: existing_release
+    - name: Require explicit rotation for changed credentials on a running installation
+      ansible.builtin.assert:
+        that:
+          - not existing_release.stat.exists or not existing_cipher.stat.exists or existing_cipher.stat.checksum == (lookup('ansible.builtin.file', secrets_file, rstrip=false) | hash('sha256'))
+        fail_msg: Use rotate-secrets.yml to change active credentials before running bootstrap; unchanged ciphertext is safe to converge.
+      no_log: true
+    - name: Install supported security and runtime packages
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+        name: [docker.io, docker-compose-v2, nftables, apparmor, apparmor-utils, auditd, unattended-upgrades, chrony, curl, openssl, python3, python3-venv, age]
+        state: present
+    - name: Apply distribution security updates
+      ansible.builtin.apt:
+        upgrade: safe
+      when: apply_updates | default(true)
+    - name: Create deploy account with no administrative group membership
+      ansible.builtin.user:
+        name: threat-deploy
+        shell: /bin/bash
+        groups: ''
+        append: false
+        password_lock: true
+    - name: Create controlled directories
+      ansible.builtin.file:
+        path: '{{ item.path }}'
+        state: directory
+        owner: '{{ item.owner | default("root") }}'
+        group: '{{ item.owner | default("root") }}'
+        mode: '{{ item.mode | default("0755") }}'
+      loop:
+        - {path: /etc/threat-service, mode: '0700'}
+        - {path: /usr/local/libexec/threat}
+        - {path: /var/lib/threat-service, mode: '0711'}
+        - {path: /var/lib/threat-service/releases, mode: '0700'}
+        - {path: /var/lib/threat-service/postgres, owner: '999', mode: '0700'}
+        - {path: /var/lib/threat-service/caddy, owner: '10003', mode: '0700'}
+        - {path: '/home/{{ admin_user }}/.ssh', owner: '{{ admin_user }}', mode: '0700'}
+        - {path: /home/threat-deploy/.ssh, owner: threat-deploy, mode: '0700'}
+    - name: Converge SSH authorized keys
+      ansible.builtin.copy:
+        content: "{{ item.key }}\n"
+        dest: '{{ item.path }}'
+        owner: '{{ item.user }}'
+        group: '{{ item.user }}'
+        mode: '0600'
+      loop:
+        - {key: '{{ admin_public_key }}', path: '/home/{{ admin_user }}/.ssh/authorized_keys', user: '{{ admin_user }}'}
+        - {key: 'restrict {{ deploy_public_key }}', path: /home/threat-deploy/.ssh/authorized_keys, user: threat-deploy}
+    - name: Install the verified SOPS binary from the controller
+      ansible.builtin.copy:
+        src: '{{ sops_binary }}'
+        dest: /usr/local/bin/sops
+        owner: root
+        group: root
+        mode: '0755'
+    - name: Install encrypted secrets and host-only decryption key
+      ansible.builtin.copy:
+        src: '{{ item.src }}'
+        dest: '{{ item.dest }}'
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+      loop:
+        - {src: '{{ secrets_file }}', dest: /etc/threat-service/secrets.enc.json}
+        - {src: '{{ age_key_file }}', dest: /etc/threat-service/age.key}
+    - name: Install public signature and backup trust anchors
+      ansible.builtin.copy:
+        src: '{{ item.src }}'
+        dest: '{{ item.dest }}'
+        mode: '0444'
+      loop:
+        - {src: '{{ signing_public_key }}', dest: /etc/threat-service/release-signing.pub}
+        - {src: '{{ backup_ca }}', dest: /etc/threat-service/backup-ca.crt}
+    - name: Install fixed stack configuration
+      ansible.builtin.copy:
+        src: '{{ repo_root }}/infra/docker/{{ item }}'
+        dest: '/etc/threat-service/{{ item }}'
+        mode: '0444'
+      loop: [compose.yml, Caddyfile, pg_hba.conf]
+    - name: Install worker and admin scripts
+      ansible.builtin.copy:
+        src: '{{ repo_root }}/infra/scripts/{{ item }}'
+        dest: '/usr/local/libexec/threat/{{ item }}'
+        mode: '0755'
+      loop: [materialize-secrets.py, release-broker.py, release-client.py, stack.py, restore.py, rotate-db-passwords.py, validate-rotation.py, health-check.py, firewall-apply, firewall-rollback]
+    - name: Install public deployment policy
+      ansible.builtin.copy:
+        content: '{{ {"site_address": site_address, "archive_enabled": archive_enabled | default(true), "local_tls": local_tls | default(false), "allow_local_image_ids": allow_local_image_ids | default(false), "repositories": image_repositories | default({})} | to_nice_json }}'
+        dest: /etc/threat-service/deploy.json
+        mode: '0600'
+    - name: Install public backup destination
+      ansible.builtin.copy:
+        content: '{{ {"endpoint": backup_endpoint, "port": backup_port, "bucket": backup_bucket} | to_nice_json }}'
+        dest: /etc/threat-service/backup.json
+        mode: '0600'
+    - name: Configure bounded Docker logging and disable the userland proxy
+      ansible.builtin.copy:
+        content: '{"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"},"live-restore":true,"userland-proxy":false,"no-new-privileges":true,"features":{"containerd-snapshotter":false},"storage-driver":"overlay2"}'
+        dest: /etc/docker/daemon.json
+        mode: '0644'
+      register: docker_config
+    - name: Enable security services
+      ansible.builtin.systemd_service:
+        name: '{{ item }}'
+        enabled: true
+        state: started
+      loop: [apparmor, auditd, chrony]
+    - name: Enable automatic security updates without unattended reboot
+      ansible.builtin.copy:
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+          Unattended-Upgrade::Automatic-Reboot "false";
+        dest: /etc/apt/apt.conf.d/52threat-security
+        mode: '0644'
+    - name: Disable core dumps and swapping secrets to disk
+      ansible.builtin.copy:
+        content: |
+          * hard core 0
+          * soft core 0
+        dest: /etc/security/limits.d/99-threat.conf
+        mode: '0644'
+    - name: Disable active swap
+      ansible.builtin.command: /sbin/swapoff --all
+      changed_when: false
+    - name: Disable swap mounts after reboot
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^(?!#)(.*\s+swap\s+.*)$'
+        replace: '# disabled by threat bootstrap: \1'
+    - name: Harden kernel defaults
+      ansible.builtin.copy:
+        content: |
+          kernel.kptr_restrict=2
+          kernel.dmesg_restrict=1
+          kernel.yama.ptrace_scope=2
+          fs.protected_hardlinks=1
+          fs.protected_symlinks=1
+          fs.suid_dumpable=0
+          net.ipv4.conf.all.accept_redirects=0
+          net.ipv4.conf.default.accept_redirects=0
+          net.ipv4.conf.all.send_redirects=0
+          net.ipv4.conf.default.send_redirects=0
+          net.ipv4.conf.all.accept_source_route=0
+          net.ipv6.conf.all.accept_redirects=0
+          net.ipv6.conf.default.accept_redirects=0
+          net.ipv6.conf.all.accept_source_route=0
+        dest: /etc/sysctl.d/90-threat.conf
+        mode: '0644'
+      register: sysctl_config
+    - name: Apply kernel defaults
+      ansible.builtin.command: sysctl --system
+      when: sysctl_config.changed
+      changed_when: true
+    - name: Install systemd units
+      ansible.builtin.copy:
+        src: 'templates/{{ item }}'
+        dest: '/etc/systemd/system/{{ item }}'
+        mode: '0644'
+      loop: [threat-secrets.service, threat-release.socket, 'threat-release@.service', threat-stack.service, threat-firewall.service, threat-backup.service, threat-backup.timer, threat-health.service, threat-health.timer]
+    - name: Save current firewall and SSH configuration for timed rollback
+      ansible.builtin.shell: |
+        nft list table inet threat > /run/threat-firewall.previous 2>/dev/null || : > /run/threat-firewall.previous
+        if test -f /etc/ssh/sshd_config.d/00-threat-service.conf; then
+          cp /etc/ssh/sshd_config.d/00-threat-service.conf /run/threat-sshd.previous
+        else
+          : > /run/threat-sshd.previous
+        fi
+      changed_when: false
+    - name: Arm a two-minute network rollback
+      ansible.builtin.command: systemd-run --unit=threat-network-rollback --on-active=120 /usr/local/libexec/threat/firewall-rollback
+      changed_when: true
+    - name: Apply and confirm network policy
+      block:
+        - name: Install keys-only SSH configuration
+          ansible.builtin.copy:
+            content: |
+              PermitRootLogin no
+              PasswordAuthentication no
+              KbdInteractiveAuthentication no
+              PubkeyAuthentication yes
+              AuthenticationMethods publickey
+              AllowUsers {{ admin_user }} threat-deploy
+              AllowAgentForwarding no
+              AllowTcpForwarding no
+              X11Forwarding no
+              PermitTunnel no
+              MaxAuthTries 3
+              MaxSessions 4
+              LoginGraceTime 20
+            dest: /etc/ssh/sshd_config.d/00-threat-service.conf
+            mode: '0644'
+            validate: /usr/sbin/sshd -t -f %s
+        - name: Render Docker-aware IPv4 and IPv6 firewall
+          ansible.builtin.template:
+            src: templates/firewall.nft.j2
+            dest: /etc/threat-service/firewall.nft
+            mode: '0600'
+        - name: Apply firewall atomically
+          ansible.builtin.command: /usr/local/libexec/threat/firewall-apply
+          changed_when: true
+        - name: Reload SSH
+          ansible.builtin.systemd_service:
+            name: ssh
+            state: reloaded
+        - name: Close the existing SSH control socket
+          ansible.builtin.meta: reset_connection
+        - name: Verify a new administrative connection
+          ansible.builtin.wait_for_connection:
+            timeout: 45
+        - name: Disarm rollback after successful reconnection
+          ansible.builtin.systemd_service:
+            name: threat-network-rollback.timer
+            state: stopped
+      rescue:
+        - name: Restore previous network settings
+          ansible.builtin.command: /usr/local/libexec/threat/firewall-rollback
+          changed_when: true
+        - name: Report network validation failure
+          ansible.builtin.fail:
+            msg: Network validation failed; rollback was requested and remains armed.
+    - name: Enable firewall at boot
+      ansible.builtin.systemd_service:
+        name: threat-firewall.service
+        daemon_reload: true
+        enabled: true
+        state: started
+    - name: Require secrets and firewall before Docker restarts containers
+      ansible.builtin.file:
+        path: /etc/systemd/system/docker.service.d
+        state: directory
+        mode: '0755'
+    - name: Install Docker boot dependencies
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Requires=threat-secrets.service threat-firewall.service
+          After=threat-secrets.service threat-firewall.service
+        dest: /etc/systemd/system/docker.service.d/10-threat.conf
+        mode: '0644'
+    - name: Start or restart Docker when its configuration changes
+      ansible.builtin.systemd_service:
+        name: docker
+        daemon_reload: true
+        enabled: true
+        state: '{{ "restarted" if docker_config.changed else "started" }}'
+    - name: Enable secret materialization and deployment socket
+      ansible.builtin.systemd_service:
+        name: '{{ item }}'
+        enabled: true
+        state: started
+      loop: [threat-secrets.service, threat-release.socket]
+    - name: Enable application and scheduled checks at boot
+      ansible.builtin.systemd_service:
+        name: '{{ item }}'
+        enabled: true
+      loop: [threat-stack.service]
+    - name: Enable schedules only on primary hosts
+      ansible.builtin.systemd_service:
+        name: '{{ item }}'
+        enabled: '{{ archive_enabled | default(true) }}'
+        state: '{{ "started" if archive_enabled | default(true) else "stopped" }}'
+      loop: [threat-backup.timer, threat-health.timer]
+    - name: Detect an installed release
+      ansible.builtin.stat:
+        path: /var/lib/threat-service/releases/current.json
+      register: installed_release
+    - name: Start the stack supervisor
+      ansible.builtin.systemd_service:
+        name: threat-stack.service
+        state: started
+      when: not installed_release.stat.exists
+    - name: Start scheduled checks on primary hosts
+      ansible.builtin.systemd_service:
+        name: '{{ item }}'
+        state: started
+      loop: [threat-backup.timer, threat-health.timer]
+      when: archive_enabled | default(true)
+    - name: Install isolated Ansible for local unprivileged deployment
+      ansible.builtin.pip:
+        name: ansible-core==2.19.3
+        virtualenv: /opt/threat-ansible
+        virtualenv_command: python3 -m venv
+    - name: Install root-owned unprivileged playbook
+      ansible.builtin.copy:
+        src: deploy.yml
+        dest: /usr/local/libexec/threat/deploy.yml
+        mode: '0644'
