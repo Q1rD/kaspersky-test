@@ -4,10 +4,12 @@ export GOTOOLCHAIN := go1.26.10
 ANSIBLE_PLAYBOOK ?= ansible-playbook
 INVENTORY ?= inventory.yml
 VARS ?= deploy-vars.yml
-.PHONY: help images generate check-config bootstrap deploy rotate-secrets
+.PHONY: help images generate check-config bootstrap deploy rotate-secrets test integration check-generated vuln
 
 help:
 	@echo 'Requirements: Docker + Compose v2; Go for generation; Ansible, SOPS and age for bootstrap.'
+	@echo 'make test integration  Run unit/HTTP tests and real PostgreSQL integration tests.'
+	@echo 'make check-generated vuln  Check generation and Go dependency vulnerabilities.'
 	@echo 'make images        Build API, Caddy and PostgreSQL images (:local).'
 	@echo 'make generate      Generate HTTP models/server from openapi.yml.'
 	@echo 'make check-config  Validate Compose configuration.'
@@ -38,3 +40,16 @@ deploy:
 rotate-secrets:
 	@test -n "$(SECRETS)" || { echo 'Set SECRETS to the new SOPS-encrypted JSON file.'; exit 1; }
 	$(ANSIBLE_PLAYBOOK) -i "$(INVENTORY)" infra/ansible/rotate-secrets.yml -e "secrets_file=$(SECRETS)"
+
+test:
+	go test -race ./...
+
+integration:
+	./scripts/test-integration.sh
+
+check-generated:
+	./scripts/check-generated.sh
+
+vuln:
+	go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+	go -C infra/docker/caddy run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
